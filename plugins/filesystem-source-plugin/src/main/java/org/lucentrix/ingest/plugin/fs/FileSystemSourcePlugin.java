@@ -72,6 +72,7 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
 
     private final Deque<Path> directories = new ArrayDeque<>();
     private final Set<String> seenThisScan = new HashSet<>();
+    private final Set<Path> visitedRealDirectories = new HashSet<>();
     private final List<PathMatcher> includeMatchers = new ArrayList<>();
     private final List<PathMatcher> rootMatchers = new ArrayList<>();
 
@@ -120,6 +121,17 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
         this.maxDepth = settings.getMaxDepth() > 0 ? settings.getMaxDepth() : Integer.MAX_VALUE;
         this.followSymlinks = settings.isFollowSymlinks();
         compileIncludes(settings.getInclude());
+
+        // Cycle guard: only tracked when symlinks are followed, so the common
+        // (followSymlinks=false) path pays no toRealPath() cost.
+        this.visitedRealDirectories.clear();
+        if (followSymlinks) {
+            try {
+                this.visitedRealDirectories.add(root.toRealPath());
+            } catch (IOException e) {
+                logger.warn("Cannot resolve filesystem root {}: {}", root, e.getMessage());
+            }
+        }
 
         this.cursor = loadCursor(name);
         this.state = loadState(name);
@@ -207,6 +219,8 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
         long modifiedMillis = Files.getLastModifiedTime(file).toMillis();
         FileFingerprint previous = state.fingerprintsOrEmpty().get(relativePath);
 
+        // Fast path: mtime + size unchanged means "not changed" without reading
+        // or hashing the file. This is what makes incremental scans O(stat).
         if (previous != null && previous.sameMetadata(size, modifiedMillis)) {
             return null;
         }
@@ -243,6 +257,8 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
                 .field(Field.CONTENT_SIZE, size)
                 .field(Field.MODIFY_DATETIME, Instant.ofEpochMilli(modifiedMillis))
                 .field(Field.TITLE, title(fileName))
+                // Local-only provenance: the current sink does not transmit
+                // VERSION_SERIES_ID; slice 4 derives the series from SourceIdentity.
                 .vsId(rootId + ":" + relativePath)
                 .field(Field.IS_CURRENT_VERSION, true)
                 .build();
@@ -294,10 +310,23 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
     }
 
     private boolean shouldDescend(Path directory) {
-        if (maxDepth == Integer.MAX_VALUE) {
-            return true;
+        if (!withinDepth(directory)) {
+            return false;
         }
-        return root.relativize(directory).getNameCount() < maxDepth;
+        if (!followSymlinks) {
+            return !Files.isSymbolicLink(directory);
+        }
+        try {
+            return visitedRealDirectories.add(directory.toRealPath());
+        } catch (IOException e) {
+            logger.warn("Cannot resolve directory {}: {}", directory, e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean withinDepth(Path directory) {
+        return maxDepth == Integer.MAX_VALUE
+                || root.relativize(directory).getNameCount() < maxDepth;
     }
 
     private boolean isIncluded(Path file) {

@@ -11,6 +11,16 @@ import org.lucentrix.ingest.runtime.plugin.JsonPluginConfig;
 import java.io.InputStream;
 import java.util.List;
 
+/**
+ * Configuration for the filesystem source connector.
+ *
+ * <p><strong>Slice 4 note:</strong> {@code SourceDocument.VERSION_SERIES_ID} is
+ * local-only in slice 1. When the sink migrates to the frozen
+ * {@code /v1/sources} + {@code /v1/ingestion-runs} contract, the platform
+ * derives the version series from {@code SourceIdentity}
+ * ({@code tenant_id + connector_id + source_id + resource_id}). Do not send
+ * {@code VERSION_SERIES_ID} on the wire.
+ */
 @EqualsAndHashCode(callSuper = true)
 @ToString
 @Getter

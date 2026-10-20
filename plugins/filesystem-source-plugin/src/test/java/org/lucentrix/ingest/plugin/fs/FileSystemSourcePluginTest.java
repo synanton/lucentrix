@@ -1,5 +1,6 @@
 package org.lucentrix.ingest.plugin.fs;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.lucentrix.ingest.ChangePage;
@@ -11,6 +12,7 @@ import org.lucentrix.ingest.runtime.plugin.ConfigEnv;
 import org.lucentrix.ingest.runtime.plugin.SourceContext;
 import org.lucentrix.ingest.runtime.persistence.FileJsonPersistence;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -134,6 +136,52 @@ public class FileSystemSourcePluginTest {
         assertThrows(IllegalArgumentException.class, plugin::start);
     }
 
+    @Test
+    public void metadataOnlyChangeWithIdenticalContentEmitsNothing() throws Exception {
+        Path root = libraryRoot();
+        Path book = root.resolve("a.pdf");
+        write(book, "same-content");
+
+        drain(newPlugin(root, 1000, List.of("**/*.pdf")));
+
+        // Same bytes, new mtime: the mtime+size fast path no longer applies, so
+        // the digest path must recognize the content as unchanged.
+        Files.setLastModifiedTime(book, FileTime.fromMillis(System.currentTimeMillis() + 5_000L));
+
+        assertTrue(drain(newPlugin(root, 1000, List.of("**/*.pdf"))).isEmpty());
+    }
+
+    @Test
+    public void traversalOrderIsDeterministicAcrossFreshScans() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("z.pdf"), "z");
+        write(root.resolve("a/inner.pdf"), "inner");
+        write(root.resolve("m.pdf"), "m");
+
+        List<String> first = drain(newPlugin(root, 1000, List.of("**/*.pdf"), false, "order-a"))
+                .stream().map(change -> change.getDocument().get(Field.SOURCE_URI)).toList();
+        List<String> second = drain(newPlugin(root, 1000, List.of("**/*.pdf"), false, "order-b"))
+                .stream().map(change -> change.getDocument().get(Field.SOURCE_URI)).toList();
+
+        assertEquals(first, second);
+    }
+
+    @Test
+    public void symlinkCycleTerminatesWhenFollowSymlinksEnabled() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("a.pdf"), "content");
+        try {
+            Files.createSymbolicLink(root.resolve("loop"), root);
+        } catch (UnsupportedOperationException | IOException e) {
+            Assumptions.assumeTrue(false, "symlinks are not supported here: " + e.getMessage());
+        }
+
+        List<ContentChange> events = drain(newPlugin(root, 1000, List.of("**/*.pdf"), true, "symlink"));
+
+        assertEquals(1, events.size());
+        assertEquals("a", events.get(0).getDocument().getTitle());
+    }
+
     private Path libraryRoot() throws Exception {
         Path root = tempDir.resolve("library");
         Files.createDirectories(root);
@@ -146,6 +194,11 @@ public class FileSystemSourcePluginTest {
     }
 
     private FileSystemSourcePlugin newPlugin(Path root, int pageSize, List<String> include) {
+        return newPlugin(root, pageSize, include, false, "storage");
+    }
+
+    private FileSystemSourcePlugin newPlugin(Path root, int pageSize, List<String> include,
+                                             boolean followSymlinks, String storageName) {
         FileSystemSourceConfig.Settings settings = FileSystemSourceConfig.Settings.builder()
                 .name("fs-test")
                 .root(root.toString())
@@ -154,7 +207,7 @@ public class FileSystemSourcePluginTest {
                 .computeSha256(true)
                 .checkpointBatchSize(1)
                 .maxDepth(64)
-                .followSymlinks(false)
+                .followSymlinks(followSymlinks)
                 .build();
 
         ConfigEnv configEnv = ConfigEnv.builder()
@@ -165,7 +218,7 @@ public class FileSystemSourcePluginTest {
 
         SourceContext context = SourceContext.builder()
                 .pluginId("filesystem-source-plugin")
-                .persistence(new FileJsonPersistence(tempDir.resolve("storage")))
+                .persistence(new FileJsonPersistence(tempDir.resolve(storageName)))
                 .pageSize(pageSize)
                 .build();
 
