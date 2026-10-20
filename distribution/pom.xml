@@ -40,6 +40,12 @@
 		</dependency>
 		<dependency>
 			<groupId>org.lucentrix.ingest</groupId>
+			<artifactId>filesystem-source-plugin</artifactId>
+			<version>${project.version}</version>
+			<type>zip</type>
+		</dependency>
+		<dependency>
+			<groupId>org.lucentrix.ingest</groupId>
 			<artifactId>synanton-target-plugin</artifactId>
 			<version>${project.version}</version>
 			<type>zip</type>
