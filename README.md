@@ -63,6 +63,7 @@ java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no
 |---|---|
 | `dummy-source-plugin` | Synthetic insurance documents |
 | `web-source-plugin` | BFS HTML crawler |
+| `filesystem-source-plugin` | Incremental PDF/EPUB library crawler (SHA-256 fingerprints, resumable scan state) |
 | `synanton-target-plugin` | Push bytes to synvault `POST /content/{tenant}`, then enqueue synflux `source=synvault` |
 | `null-target-plugin` | No-op sink for local throughput tests |
 
