@@ -257,8 +257,10 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
                 .field(Field.CONTENT_SIZE, size)
                 .field(Field.MODIFY_DATETIME, Instant.ofEpochMilli(modifiedMillis))
                 .field(Field.TITLE, title(fileName))
-                // Local-only provenance: the current sink does not transmit
-                // VERSION_SERIES_ID; slice 4 derives the series from SourceIdentity.
+                // VERSION_SERIES_ID: local-only provenance in slice 1; on /v1/...
+                // the platform derives the series from SourceIdentity — do NOT
+                // send on the wire, and do NOT remove the field when the sink
+                // migrates; local use persists.
                 .vsId(rootId + ":" + relativePath)
                 .field(Field.IS_CURRENT_VERSION, true)
                 .build();

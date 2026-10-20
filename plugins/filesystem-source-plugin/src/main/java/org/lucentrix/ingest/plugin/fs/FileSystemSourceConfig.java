@@ -19,7 +19,8 @@ import java.util.List;
  * {@code /v1/sources} + {@code /v1/ingestion-runs} contract, the platform
  * derives the version series from {@code SourceIdentity}
  * ({@code tenant_id + connector_id + source_id + resource_id}). Do not send
- * {@code VERSION_SERIES_ID} on the wire.
+ * {@code VERSION_SERIES_ID} on the wire, and do not remove the field when the
+ * sink migrates — local use persists.
  */
 @EqualsAndHashCode(callSuper = true)
 @ToString
