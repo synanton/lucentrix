@@ -18,6 +18,7 @@
 		<module>null-target-plugin</module>
 		<module>dummy-source-plugin</module>
 		<module>web-source-plugin</module>
+		<module>filesystem-source-plugin</module>
 		<module>synanton-target-plugin</module>
 	</modules>
 

@@ -1,0 +1,10 @@
+{
+  "name": "FilesystemSource",
+  "root": "books",
+  "rootId": "books",
+  "include": ["**/*.pdf", "**/*.epub"],
+  "computeSha256": true,
+  "checkpointBatchSize": 100,
+  "maxDepth": 64,
+  "followSymlinks": false
+}
