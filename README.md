@@ -68,6 +68,11 @@ java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no
 
 Source plugins implement `SourcePlugin`; sinks implement `SinkPlugin`. Domain types: `SourceDocument`, `ContentChange`, `ChangeOp`, `ChangePage`.
 
+## Docs
+
+- [`docs/synanton_ingestion.md`](docs/synanton_ingestion.md) — ingestion architecture (proposed design)
+- [`docs/ticket-16-filesystem-source-connector.md`](docs/ticket-16-filesystem-source-connector.md) — plan for the filesystem source connector (#16)
+
 ## License
 
 Apache 2.0 - see [LICENSE](LICENSE).
