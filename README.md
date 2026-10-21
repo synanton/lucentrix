@@ -17,7 +17,7 @@ The Spring Boot CLI is `ingestion/crawler`. Plugins zip under `plugins/*/target`
 
 ## Run
 
-1. Start Synanton ingestion stack (Cassandra, MinIO, synvault, synflux). See the Synanton README ingestion demo.
+1. Start the Synanton platform (Cassandra, MinIO, synvault, synflux, synquest). See the Synanton README ingestion demo.
 2. Copy `application.properties` next to the CLI (or use the packaged `config/`).
 3. Point the sink at Synanton:
 
@@ -33,12 +33,21 @@ synanton-target-plugin.config=config/synanton.json
 ```json
 {
   "name": "synanton",
-  "baseUrl": "http://localhost:8088",
-  "synfluxUrl": "http://localhost:8090",
+  "baseUrl": "http://<platform-node-ip>:30090",
   "tenant": "demo",
-  "apiKey": ""
+  "apiKey": "<bearer token minted from the platform JWT secret>",
+  "sourceId": "books-demo",
+  "connectorId": "upload",
+  "sourceEndpoint": "upload://books"
 }
 ```
+
+`baseUrl` is the platform `/v1` API (the synflux NodePort in the demo).
+`apiKey` is the bearer token; the tenant comes from the token, never from a
+request header. The sink registers the upload source once, then posts each
+file as `multipart/form-data` to `POST /v1/ingestion-runs` with
+`connector_id`, `source_id`, `resource_id`, and the file bytes. `synfluxUrl`
+and `tenant` are retained for backward compatibility but are no longer sent.
 
 4. Start the CLI (status UI on port 8095 by default):
 
@@ -64,7 +73,7 @@ java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no
 | `dummy-source-plugin` | Synthetic insurance documents |
 | `web-source-plugin` | BFS HTML crawler |
 | `filesystem-source-plugin` | Incremental PDF/EPUB library crawler (SHA-256 fingerprints, resumable scan state) |
-| `synanton-target-plugin` | Push bytes to synvault `POST /content/{tenant}`, then enqueue synflux `source=synvault` |
+| `synanton-target-plugin` | Push each file as multipart `POST /v1/ingestion-runs` (upload source; tenant from the bearer token) |
 | `null-target-plugin` | No-op sink for local throughput tests |
 
 Source plugins implement `SourcePlugin`; sinks implement `SinkPlugin`. Domain types: `SourceDocument`, `ContentChange`, `ChangeOp`, `ChangePage`.

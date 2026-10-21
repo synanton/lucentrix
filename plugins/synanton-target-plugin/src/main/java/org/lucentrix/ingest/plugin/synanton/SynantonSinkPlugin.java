@@ -8,9 +8,7 @@ import org.lucentrix.ingest.runtime.plugin.SinkContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 public class SynantonSinkPlugin extends AbstractPlugin<SynantonSinkConfig, SinkContext> implements SinkPlugin {
 
@@ -22,8 +20,9 @@ public class SynantonSinkPlugin extends AbstractPlugin<SynantonSinkConfig, SinkC
         SynantonSinkConfig.Settings settings = config.getSettings();
         this.client = new SynantonClient(
                 settings.getBaseUrl(),
-                settings.getSynfluxUrl(),
-                settings.getTenant(),
+                settings.getSourceId(),
+                settings.getConnectorId(),
+                settings.getSourceEndpoint(),
                 settings.getApiKey());
     }
 
@@ -37,7 +36,6 @@ public class SynantonSinkPlugin extends AbstractPlugin<SynantonSinkConfig, SinkC
         if (documents == null || documents.isEmpty()) {
             return;
         }
-        List<UUID> refs = new ArrayList<>();
         for (ContentChange change : documents) {
             if (change == null || change.getDocument() == null) {
                 continue;
@@ -47,12 +45,13 @@ public class SynantonSinkPlugin extends AbstractPlugin<SynantonSinkConfig, SinkC
                 continue;
             }
             SourceDocument document = change.getDocument();
-            UUID ref = client.push(
+            String resourceId = SynantonPayload.resourceId(document);
+            SynantonClient.UploadResult result = client.upload(
                     SynantonPayload.bytes(document),
-                    SynantonPayload.sourceUri(document),
+                    resourceId,
                     SynantonPayload.mimeType(document));
-            refs.add(ref);
+            log.info("Queued {} as run {} (operation {}, status {})",
+                    resourceId, result.runId(), result.operationId(), result.status());
         }
-        client.enqueue(refs);
     }
 }
