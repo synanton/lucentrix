@@ -1,6 +1,21 @@
 # Lucentrix
 
-Lucentrix is a **pluggable ingestion CLI** for [Synanton](https://github.com/andreminin/synanton). It crawls source systems (dummy data, web, and future connectors), then **pushes raw documents** into Synanton (`synvault` + `synflux`). It does not parse, chunk, enrich, or index - those stages stay in Synanton.
+Lucentrix is a **pluggable ingestion CLI** for [Synanton](https://github.com/andreminin/synanton). It crawls source systems (dummy data, web, and future connectors), then **pushes raw documents** into Synanton through the platform `/v1` ingestion API. It does not parse, chunk, enrich, or index - those stages stay in Synanton.
+
+## Status (Phase 1, 2026-10-21)
+
+The filesystem source and `synanton-target-plugin` use the current
+`POST /v1/sources` + multipart `POST /v1/ingestion-runs` contract. The legacy
+`/content/{tenant}` and `/ingest` paths are removed and are not supported by
+the sink.
+
+Uploads can be large (the platform accepts multipart files up to its 100 MB
+limit), but the platform's sync extraction ceiling
+(`EXTRACTION_MAX_SYNC_OBJECT_BYTES`, default 10 MiB) still applies. Larger
+files need the asynchronous extraction path/configuration.
+
+A re-crawl treats `409` from `/v1/sources` as "source already exists" and
+continues with the upload.
 
 ## Requirements
 
@@ -34,7 +49,6 @@ synanton-target-plugin.config=config/synanton.json
 {
   "name": "synanton",
   "baseUrl": "http://<platform-node-ip>:30090",
-  "tenant": "demo",
   "apiKey": "<bearer token minted from the platform JWT secret>",
   "sourceId": "books-demo",
   "connectorId": "upload",
@@ -46,8 +60,8 @@ synanton-target-plugin.config=config/synanton.json
 `apiKey` is the bearer token; the tenant comes from the token, never from a
 request header. The sink registers the upload source once, then posts each
 file as `multipart/form-data` to `POST /v1/ingestion-runs` with
-`connector_id`, `source_id`, `resource_id`, and the file bytes. `synfluxUrl`
-and `tenant` are retained for backward compatibility but are no longer sent.
+`connector_id`, `source_id`, `resource_id`, and the file bytes. The legacy
+`synfluxUrl`/`tenant` fields are not used by the current contract.
 
 4. Start the CLI (status UI on port 8095 by default):
 
