@@ -103,10 +103,16 @@ class SynantonClient {
                     .POST(HttpRequest.BodyPublishers.ofByteArray(MAPPER.writeValueAsBytes(request)));
             authorize(builder);
             HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() >= 300) {
-                throw new IllegalStateException("source registration failed: " + response.statusCode() + " " + response.body());
+            int status = response.statusCode();
+            // Re-crawl idempotency: the platform returns 409 when the source
+            // already exists. That is a successful precondition, not a failure.
+            if (status >= 300 && status != 409) {
+                throw new IllegalStateException("source registration failed: " + status + " " + response.body());
             }
-            log.info("Registered upload source {} (connector={}, endpoint={})", sourceId, connectorId, sourceEndpoint);
+            log.info(status == 409
+                            ? "Upload source {} already exists (connector={}, endpoint={})"
+                            : "Registered upload source {} (connector={}, endpoint={})",
+                    sourceId, connectorId, sourceEndpoint);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             sourceEnsured.set(false);
