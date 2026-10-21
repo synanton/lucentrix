@@ -38,7 +38,7 @@ The kernel is reusable as-is; do not build a one-off crawler app.
 | `WebSourcePlugin` is the working template | `plugins/web-source-plugin/.../WebSourcePlugin.java` | Copy its `start()` cursor-load / `next()` page / `save()` shape |
 | `Field` vocabulary already covers files | `core/.../field/Field.java` | `SOURCE_URI`, `SOURCE_ID`, `MIME_TYPE`, `CONTENT_BYTES`, `CONTENT_SIZE`, `MODIFY_DATETIME`, `TITLE`, `FILE_EXTENSION`, `IS_FOLDER`, `FOLDER_PATH`, `PATHS` |
 | Cursor is one JSON file per plugin name (`FileJsonPersistence`) | `plugin-api/.../FileJsonPersistence.java` | A multi-thousand-file fingerprint map in the cursor is rewritten on every `save()` — decide sharding before load |
-| Sink posts to `POST /content/{tenant}` then `POST /ingest` | `plugins/synanton-target-plugin/.../SynantonClient.java` | Legacy internal route, not the `/v1/...` contract (see §Contract gaps) |
+| Sink posts multipart `POST /v1/ingestion-runs` (slice 4); legacy pair removed | `plugins/synanton-target-plugin/.../SynantonClient.java` | Frozen `/v1` source + run + operation contract |
 | Sink **drops** `DELETE` | `plugins/synanton-target-plugin/.../SynantonSinkPlugin.java` | `DELETE` emission is #16's "conservative deletion" — must be handled or recorded |
 
 ### The two checks, answered
@@ -46,8 +46,9 @@ The kernel is reusable as-is; do not build a one-off crawler app.
 1. **`POST /content/{tenant}` still exists** in `synvault`
    (`ContentPushController`), and **`content_ref_id` is `UUIDv5(tenant + ":" +
    sha256(bytes))`**, not the raw digest (`ContentPushPort`). The response returns
-   `{content_ref_id, sha256, size_bytes}`. The connector therefore does **not**
-   need to send a digest; synvault computes it. The connector's own SHA-256 is
+   `{content_ref_id, sha256, size_bytes}`. **The sink no longer uses it (slice 4);**
+   it remains for other callers until #329. The connector therefore does **not**
+   need to send a digest; the platform computes it. The connector's own SHA-256 is
    still required for *local* change detection.
 2. **`FileJsonPersistence` does not scale to a megabyte cursor.** It rewrites the
    whole JSON on each `save()`. The fingerprint cursor must be sharded (see
@@ -58,36 +59,26 @@ The kernel is reusable as-is; do not build a one-off crawler app.
 These are the "same pipeline, one contract" issues. Each is a decision, not a
 given — record the decision in the PR.
 
-1. **Identity.** The platform's frozen source model is
+1. **Identity — implemented (slice 4).** The platform's frozen source model is
    `{tenant_id, connector_id, source_id, resource_id}` + `content_digest` +
-   `source_revision` (`platform/docs/api/source-model.md`). The sink currently
-   sends one `X-Source-Uri`. Mapping:
-   - `connector_id` → `filesystem` (or `filesystem:<root-id>` if a tenant may
-     have several roots).
-   - `source_id` → the configured root id (stable across runs).
-   - `resource_id` → normalized connector-relative path (not absolute path, not
-     filename alone).
-   - `SOURCE_URI` → **`lucentrix://filesystem/<root-id>/<rel-path>`** — a stable
-     *label* (source identifier), not a locator. Retrieval is always via the
-     platform content cache; the crawler's root may be offline. A resolver
-     (`GET /resolve?uri=...`) is an optional follow-up for always-on roots, not
-     part of #16.
-2. **Tenant.** The sink sends `X-Tenant: <config tenant>` and the README example
-   is literally `"tenant": "demo"`. Under the frozen contract tenant is derived
-   from verified identity, never asserted on the wire. Either the connector
-   presents a service credential and stops asserting tenant, or the legacy route's
-   tenant handling is explicitly recorded as internal-only. It cannot stay
-   implicit.
-3. **Route — migrate (decided).** The sink migrates from `POST /ingest` to the
-   frozen `/v1/sources` + `/v1/ingestion-runs` + `/v1/operations` contract. The
-   legacy route must not become a permanent Lucentrix-only exception with its
-   own failure modes, error shapes (legacy vs frozen W2), and Operation
-   semantics. `SynantonClient` is one small file; the migration is mechanical.
-   The platform retains the legacy route only until the migration lands, then
-   removes it — the removal trigger is tracked as `synanton/platform` #329
-   ("Remove legacy Lucentrix ingestion routes after sink migration"), which
-   closes when the legacy routes are deleted and only test fixtures reference
-   them.
+   `source_revision` (`platform/docs/api/source-model.md`). The multipart sink
+   sends:
+   - `connector_id` → configurable, default `upload` (the platform's caller-pushed
+     connector).
+   - `source_id` → `books-demo` (configurable, stable across runs).
+   - `resource_id` → normalized connector-relative path, from `vsId` or the
+     Lucentrix source URI.
+   - The platform stores the upload label as
+     **`upload://<source_id>/<resource_id>`**. The Lucentrix
+     `lucentrix://filesystem/<root>/<rel-path>` URI remains a local label; the
+     platform's `upload://` URI is what provenance returns.
+2. **Tenant — implemented (slice 4).** The sink sends no `X-Tenant`; it presents a
+   bearer token and the platform derives the tenant from the verified identity.
+   `tenant` remains in the config for logging/backward compatibility only.
+3. **Route — implemented (slice 4).** The sink now uses the frozen
+   `/v1/sources` + `/v1/ingestion-runs` + `/v1/operations` contract (multipart).
+   The legacy `/content/{tenant}` + `/ingest` pair remains for other callers until
+   `synanton/platform` #329 removes it.
 4. **DELETE — wire it (decided).** The sink drops `DELETE` today (logs and
    skips). Filesystem deletion is exactly #16's deletion semantics: the
    connector emits `DELETE` only after a complete scan, and the migrated sink

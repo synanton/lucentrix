@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SynantonPayloadTest {
@@ -41,5 +42,33 @@ class SynantonPayloadTest {
                 .document(SourceDocument.builder().field(Field.ID, "x").build())
                 .build();
         assertTrue(SynantonPayload.isDelete(change));
+    }
+    @Test
+    void derivesResourceIdFromVersionSeries() {
+        SourceDocument document = SourceDocument.builder()
+                .field(Field.ID, "doc-1")
+                .field(Field.SOURCE_ID, "books")
+                .vsId("books:a/b c.pdf")
+                .build();
+        assertEquals("a/b c.pdf", SynantonPayload.resourceId(document));
+    }
+
+    @Test
+    void derivesResourceIdFromEncodedSourceUri() {
+        SourceDocument document = SourceDocument.builder()
+                .field(Field.ID, "doc-1")
+                .field(Field.SOURCE_URI, "lucentrix://filesystem/books/a/b%20c.pdf")
+                .build();
+        assertEquals("a/b c.pdf", SynantonPayload.resourceId(document));
+    }
+
+    @Test
+    void rejectsTraversalInResourceId() {
+        SourceDocument document = SourceDocument.builder()
+                .field(Field.ID, "doc-1")
+                .field(Field.SOURCE_ID, "books")
+                .vsId("books:../etc/passwd")
+                .build();
+        assertThrows(IllegalArgumentException.class, () -> SynantonPayload.resourceId(document));
     }
 }

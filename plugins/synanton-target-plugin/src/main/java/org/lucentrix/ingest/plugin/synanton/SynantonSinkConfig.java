@@ -36,10 +36,13 @@ public class SynantonSinkConfig extends JsonPluginConfig<SynantonSinkConfig.Sett
     protected Settings defaultSettings() {
         return Settings.builder()
                 .name("synanton")
-                .baseUrl("http://localhost:8088")
-                .synfluxUrl("http://localhost:8090")
+                .baseUrl("http://localhost:8090")
+                .synfluxUrl("")
                 .tenant("demo")
                 .apiKey("")
+                .sourceId("books-demo")
+                .connectorId("upload")
+                .sourceEndpoint("upload://books")
                 .build();
     }
 
@@ -49,9 +52,18 @@ public class SynantonSinkConfig extends JsonPluginConfig<SynantonSinkConfig.Sett
     @Getter
     public static class Settings {
         private String name;
+        /** Platform API base (synflux NodePort in the demo). */
         private String baseUrl;
+        /** Deprecated: the sink now uses the single multipart ingestion endpoint. */
         private String synfluxUrl;
+        /** Informational only; the tenant comes from the bearer token. */
         private String tenant;
         private String apiKey;
+        /** Upload source registered with the platform. */
+        private String sourceId;
+        /** Connector id recorded on the source and each ingestion run. */
+        private String connectorId;
+        /** Source endpoint label (informational for upload sources). */
+        private String sourceEndpoint;
     }
 }

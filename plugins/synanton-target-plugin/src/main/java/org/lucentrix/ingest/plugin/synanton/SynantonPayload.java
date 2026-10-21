@@ -6,7 +6,10 @@ import org.lucentrix.ingest.SourceDocument;
 import org.lucentrix.ingest.metadata.field.Field;
 import org.lucentrix.ingest.serde.json.JacksonConfig;
 
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 final class SynantonPayload {
 
@@ -53,6 +56,62 @@ final class SynantonPayload {
             return sourceId;
         }
         return "lucentrix://" + document.getId();
+    }
+
+    /**
+     * Connector-relative path for the platform SourceIdentity. The filesystem
+     * source carries it as {@code vsId = rootId:relativePath}; older/other
+     * sources are read back from the Lucentrix source URI.
+     */
+    static String resourceId(SourceDocument document) {
+        String versionSeries = document.getVersionSeriesId();
+        if (versionSeries != null && !versionSeries.isBlank()) {
+            int separator = versionSeries.indexOf(':');
+            if (separator >= 0 && separator < versionSeries.length() - 1) {
+                return normalize(versionSeries.substring(separator + 1));
+            }
+            return normalize(versionSeries);
+        }
+        String uri = sourceUri(document);
+        String marker = "://filesystem/";
+        int start = uri.indexOf(marker);
+        if (start >= 0) {
+            String remainder = uri.substring(start + marker.length());
+            int slash = remainder.indexOf('/');
+            if (slash >= 0 && slash < remainder.length() - 1) {
+                return normalize(decodePath(remainder.substring(slash + 1)));
+            }
+        }
+        throw new IllegalArgumentException("Cannot derive a resource_id for document " + document.getId());
+    }
+
+    private static String decodePath(String encoded) {
+        StringBuilder decoded = new StringBuilder(encoded.length());
+        String[] segments = encoded.split("/", -1);
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) {
+                decoded.append('/');
+            }
+            decoded.append(URLDecoder.decode(segments[i], StandardCharsets.UTF_8));
+        }
+        return decoded.toString();
+    }
+
+    private static String normalize(String value) {
+        List<String> kept = new ArrayList<>();
+        for (String part : value.replace('\\', '/').split("/")) {
+            if (part.isEmpty() || ".".equals(part)) {
+                continue;
+            }
+            if ("..".equals(part)) {
+                throw new IllegalArgumentException("resource_id must be a normalized connector-relative path");
+            }
+            kept.add(part);
+        }
+        if (kept.isEmpty()) {
+            throw new IllegalArgumentException("resource_id must not be empty");
+        }
+        return String.join("/", kept);
     }
 
     static boolean isDelete(ContentChange change) {
