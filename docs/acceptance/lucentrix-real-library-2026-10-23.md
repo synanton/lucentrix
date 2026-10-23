@@ -97,19 +97,105 @@ Local run artifacts (logs and JSON responses) were kept outside the repository u
 
 The deterministic generator is committed at
 `scripts/acceptance/generate_margin_stress_corpus.py` with seed
-`lucentrix-margin-stress-v1`. It generates 111 one-page PDFs (101 designated
-tombstones, 10 live) containing the query term `retention`; at limit 10 and
-margin 100, the top 110 contains 101 tombstones and at most 9 live, forcing the
-refetch guard.
+`lucentrix-margin-stress-v1`. It generates 151 one-page PDFs (131 designated
+tombstones with high term frequency, 20 live) containing the query term
+`retention`; the public search limit is 20 and the over-fetch margin is 100, so
+the top 120 is tombstone-dominated and the guard refetches to 220.
 
 Regeneration check: generated twice into separate directories and compared:
 
 ```text
-cf567a1a035911b9fb2ecea3ea0bb23eb29d4d8b1bfac9ef7fddf466635276c1
+4869cb0907b3d6d29334d36f000a059860e9376b9f2d9b4147cfd847e28fc615
 ```
 
 Both runs produced byte-identical manifests. The stress manifest hash is
-`cf567a1a035911b9fb2ecea3ea0bb23eb29d4d8b1bfac9ef7fddf466635276c1`; core
+`4869cb0907b3d6d29334d36f000a059860e9376b9f2d9b4147cfd847e28fc615`; core
 corpus hash `b3c4fedb457d9dc746ce723180dad76858e805e79387ebc504128a8f0d59f08e`
-is unchanged. This proves the stress corpus is reproducible from the repo; the
-guard run itself remains to be executed in the rerun.
+is unchanged. The 111/10 version was replaced after the public limit (20) made
+its window too small to trigger the guard; this is a corpus-design correction,
+not a product change.
+
+## Second run — 2026-10-23 (observed values)
+
+**Result: PASS for the acceptance criteria exercised by this run.** #16 can
+close; the prior failed run remains preserved above.
+
+| Item | Value |
+|---|---|
+| Platform code under test | `e5114918f7de24260eea340dffefcf24da927d89` (#410/#415) |
+| Lucentrix crawler code | `1e7f6b541a323cab24ce05d5c565c9e55ddfc19a` |
+| Harness version | `753fa52ba3c97c27336d78e145f4c3497be6512b` |
+| Core corpus hash | `b3c4fedb457d9dc746ce723180dad76858e805e79387ebc504128a8f0d59f08e` |
+| Stress manifest hash | `4869cb0907b3d6d29334d36f000a059860e9376b9f2d9b4147cfd847e28fc615` |
+| Tenant/source | `lucentrix-rerun` / `fs-rerun` |
+| Stress tenant/source | `lucentrix-stress2` / `fs-stress2` |
+| Execution | source-based (original classes jar + distribution libs); #27 open |
+
+### Criterion results
+
+1. **Discovery — PASS.** Run 1 produced 6 source versions under
+   `level1/level2/level3` plus `level1/level2/locked`; `ignored.txt` was absent.
+2. **Unchanged rescan — PASS.** Run 2 emitted no `REPLACE`/`DELETE`; 6 versions
+   before and after; all `version_id`s identical. No projection rebuild was
+   performed for this criterion.
+3. **Changed file — PASS.** `change-me.pdf` was replaced with
+   `quarterly-report.pdf`; exactly one new version `ccd58e6e-3e5a-542c-a985-f4d483c1e7f4`
+   appeared, and every sibling retained its run-1 `version_id`.
+4. **Duplicate decision — PASS.** `mental-health-report-2010.pdf`
+   (`ceba99f6-8a6b-5b28-aab9-de5220d74031`) and `duplicate.pdf`
+   (`3d6aeb96-4e2e-597b-9e06-735939844551`) are two versions sharing artifact
+   `a3a32259-1a8c-4af9-9e98-b7196209a452`. `change-me.pdf` and `locked.pdf`
+   also shared artifact `373d2241-d478-4cd8-ba4f-d57d80e01e80` before the
+   change. The PDF fact hit carried both mental/duplicate version IDs.
+5. **Deletion — PASS, two separate assertions.**
+   - **5b suppression:** after deleting `remove-me.pdf` and making
+     `level1/level2` unreadable, the scan emitted no `DELETE` and no error;
+     state retained 6 fingerprints including `remove-me.pdf`.
+   - **5a complete-scan delete:** after restoring permissions, the scan emitted
+     one `DELETE` for `remove-me.pdf` (run `730a6be0-38ac-353f-a8b5-7661deee6ca3`,
+     operation `21444f49-5302-4b10-8211-37ebd3872380`). Search for
+     `Revenue grew in Q1.` returned only the surviving live sibling
+     `change-me.pdf` version `ccd58e6e…`; provenance source identity was
+     `manual-upload://fs-rerun/level1/level2/level3/change-me.pdf`. Repeating
+     DELETE for `remove-me.pdf` returned `404` with no new operation. Deleting
+     the last live referent `change-me.pdf` (run
+     `bf6d5ecb-7efa-3608-a38a-dfce14b98097`) made the chunk disappear from
+     search and its provenance `404`; the shared artifact remained.
+6. **Interruption at source.save — PASS (test-level).**
+   `FileSystemSourcePluginTest.interruptedAfterDeleteEmissionBeforeSave_reemitsWithoutOrphanedFingerprint`
+   (harness `753fa52`): DELETE emitted, save skipped, restart re-emitted it.
+7. **Named HTTP failures — PASS (test-level).**
+   `SynantonClientTest.deleteHttp500PropagatesAsAFailure` and
+   `deleteHttp404IsIdempotentAlreadyAbsent`: 500 propagates; 404 is already-absent.
+   The first run's real 400 remains historical evidence; no fix was folded in.
+8. **EPUB — PASS.** Version `2bd5c0e6-d34b-5947-9b8c-e0aa3c290854` with
+   `application/epub+zip`; hit `03c1e9a8-ee0a-5192-b126-00392b8391de:0`
+   returned the pinned sentence. Operation outcome was `PARTIAL`.
+9. **PDF provenance — PASS.** Fact hit `683c831a-3b22-50f3-bfe5-6ac810a9e531:5`;
+   provenance lists `ceba99f6…` and `3d6aeb96…`, digest `d60e114c…b191f`;
+   canonical page 2 (`page_start=2`, `page_end=2`), section
+   `APPENDIX A: DATA SOURCE DESCRIPTIONS`.
+10. **Tenant isolation — PASS.** Tenant `lucentrix-rerun-other` returned 0
+    results for the PDF fact and 404 for the tenant-A provenance URL.
+11. **Rescan after interruption — PASS (test-level).** The same harness test
+    leaves no orphaned fingerprint and a further scan is empty; post-recovery
+    state is the clean-delete state.
+
+### Guard-triggering stress run
+
+- 151 documents, 131 tombstones, 20 live; query `retention`.
+- Pre-delete clean-window search p50: **47.6 ms**.
+- Post-delete guard search p50: **139.7 ms**; 20 live results returned.
+- Refetch log (synquest):
+  `Tombstone filtering refetch for tenant 'lucentrix-stress2': window 120 -> 220 for query 'retention'`.
+- Negative control is the unit test
+  `TombstoneFilteringTest.cleanWindowDoesNotTriggerARefetch` (one search call, no refetch).
+
+### Caveats
+
+- This run is **source-based**, not distribution-based; #27 remains open.
+- This run proves search/provenance exclusion immediately after `202`; it does
+  not prove crash durability between tombstone write and response. #412 owns
+  that.
+- Dense-leg RRF symmetry remains a recorded, unexercised gap; the current path
+  is BM25-only.

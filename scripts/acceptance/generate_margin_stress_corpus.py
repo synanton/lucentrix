@@ -15,12 +15,12 @@ from pathlib import Path
 
 SEED = "lucentrix-margin-stress-v1"
 QUERY = "retention"
-DEFAULT_DOCUMENTS = 111
-DEFAULT_TOMBSTONES = 101
+DEFAULT_DOCUMENTS = 151
+DEFAULT_TOMBSTONES = 131
 
 
-def pdf_bytes(index: int) -> bytes:
-    body = f"Stress document {index:03d} {SEED} {QUERY} policy."
+def pdf_bytes(index: int, repeats: int) -> bytes:
+    body = f"Stress document {index:03d} {SEED} " + (QUERY + " ") * repeats + "policy."
     stream = f"BT /F1 12 Tf 72 720 Td ({body}) Tj ET".encode()
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -56,14 +56,15 @@ def main() -> int:
 
     if args.tombstones >= args.documents:
         raise SystemExit("tombstones must be fewer than documents")
-    if args.documents - args.tombstones > 10:
-        raise SystemExit("live documents must be fewer than the rerun limit+margin - tombstones")
+    if args.tombstones <= 120:
+        raise SystemExit("tombstones must exceed the public limit+margin window (120)")
 
     args.output.mkdir(parents=True, exist_ok=True)
     paths = []
     for index in range(args.documents):
         path = args.output / f"doc-{index:03d}.pdf"
-        path.write_bytes(pdf_bytes(index))
+        repeats = 50 if index < args.tombstones else 1
+        path.write_bytes(pdf_bytes(index, repeats))
         paths.append(path)
 
     manifest = "\n".join(
@@ -80,12 +81,15 @@ def main() -> int:
         "documents": args.documents,
         "tombstones": args.tombstones,
         "live": args.documents - args.tombstones,
+        "public_limit": 20,
+        "overfetch_margin": 100,
+        "window": 120,
         "tombstone_files": [f"doc-{i:03d}.pdf" for i in range(args.tombstones)],
         "live_files": [f"doc-{i:03d}.pdf" for i in range(args.tombstones, args.documents)],
         "manifest_sha256": manifest_hash,
         "guard_trigger": (
-            "limit=10, margin=100: top 110 contains 101 tombstones + at most 9 live; "
-            "refetch to 210 returns all 10 live documents"
+            "public limit=20, margin=100: top 120 is tombstone-dominated (131 high-frequency "
+            "tombstones), refetch to 220 returns all 20 live documents"
         ),
     }
     (args.output / "stress-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
