@@ -92,3 +92,24 @@ Local run artifacts (logs and JSON responses) were kept outside the repository u
   contract failure should not look identical to a transient one. The
   transient/permanent classification is tracked in #29, within Lucentrix's
   reconciliation scope and separate from the deferred EWP-2 retry policy.
+
+## Margin-stress corpus reproducibility (2026-10-23)
+
+The deterministic generator is committed at
+`scripts/acceptance/generate_margin_stress_corpus.py` with seed
+`lucentrix-margin-stress-v1`. It generates 111 one-page PDFs (101 designated
+tombstones, 10 live) containing the query term `retention`; at limit 10 and
+margin 100, the top 110 contains 101 tombstones and at most 9 live, forcing the
+refetch guard.
+
+Regeneration check: generated twice into separate directories and compared:
+
+```text
+cf567a1a035911b9fb2ecea3ea0bb23eb29d4d8b1bfac9ef7fddf466635276c1
+```
+
+Both runs produced byte-identical manifests. The stress manifest hash is
+`cf567a1a035911b9fb2ecea3ea0bb23eb29d4d8b1bfac9ef7fddf466635276c1`; core
+corpus hash `b3c4fedb457d9dc746ce723180dad76858e805e79387ebc504128a8f0d59f08e`
+is unchanged. This proves the stress corpus is reproducible from the repo; the
+guard run itself remains to be executed in the rerun.
