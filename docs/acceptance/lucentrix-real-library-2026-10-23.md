@@ -70,3 +70,21 @@ The EPUB is a valid EPUB 3 with XHTML chapters, a table (`Program | Allocation`)
 #16 is **not closed**. The next run requires #408 to be fixed, a named interruption harness at `source.save()`, and a clean re-run of criteria 5a, 5b, 6, 7, and 11. The passing results above remain valid for the code under test; they should not be re-interpreted as a full acceptance.
 
 Local run artifacts (logs and JSON responses) were kept outside the repository under `/tmp/opencode/lucentrix-acceptance/`; the values above are the durable record.
+
+## Post-run addendum (2026-10-23)
+
+- **This run was source-based, not distribution-based.** It used the original
+  classes jar with the distribution's `lib/` directory and an external
+  `application.properties`; it does not validate the shipped `run-crawler.sh`
+  or the repackaged jar. #27 tracks that packaging gap. The passing results
+  remain valid for the connector code under test, not for the distribution
+  artifact.
+- **#408 was fixed after this run** in platform #409 (`04744208cf917fabac25900b5fe56dda4dc05ed3`).
+  The failure record above remains historical: this run did not exercise the
+  fix. Criteria 5a, 5b, 6, 7, and 11 still require a clean rerun with the
+  interruption/failure-injection harness before #16 can close.
+- **Permanent failures currently re-emit indefinitely.** Preserving the
+  fingerprint on the 400 was the correct safety behavior, but a permanent
+  contract failure should not look identical to a transient one. The
+  transient/permanent classification is tracked in #29, within Lucentrix's
+  reconciliation scope and separate from the deferred EWP-2 retry policy.
