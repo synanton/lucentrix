@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -85,6 +86,37 @@ class SynantonClient {
         }
     }
 
+    UploadResult delete(String resourceId) {
+        ensureSource();
+        String uri = baseUrl + "/v1/sources/" + encodePathSegment(sourceId)
+                + "/resources?resource_id=" + URLEncoder.encode(resourceId, StandardCharsets.UTF_8);
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(uri))
+                .timeout(Duration.ofMinutes(2))
+                .DELETE();
+        authorize(builder);
+        try {
+            HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status == 404) {
+                return new UploadResult("", "", "NOT_FOUND");
+            }
+            if (status >= 300) {
+                throw new IllegalStateException("resource delete failed: " + status + " " + response.body());
+            }
+            JsonNode node = MAPPER.readTree(response.body());
+            return new UploadResult(
+                    node.path("run_id").asText(),
+                    node.path("operation_id").asText(),
+                    node.path("status").asText());
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted deleting " + resourceId, ex);
+        } catch (Exception ex) {
+            throw new RuntimeException("Failed deleting " + resourceId + " from " + baseUrl, ex);
+        }
+    }
+
     private void ensureSource() {
         if (!sourceEnsured.compareAndSet(false, true)) {
             return;
@@ -156,6 +188,10 @@ class SynantonClient {
         int slash = resourceId.lastIndexOf('/');
         String name = slash >= 0 ? resourceId.substring(slash + 1) : resourceId;
         return name.replace("\\", "_").replace("\"", "_").replace("\r", "_").replace("\n", "_");
+    }
+
+    private static String encodePathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static String trimSlash(String url) {

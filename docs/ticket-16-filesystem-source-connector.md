@@ -1,6 +1,6 @@
 # Lucentrix #16 — Filesystem source connector (PDF/EPUB library crawling)
 
-**Status:** Plan (not started)
+**Status:** Slices 1–4 implemented; real-library acceptance evidence pending
 **Ticket:** Lucentrix #16
 **Repo:** `lucentrix`
 **Related:** Platform #328 (`synanton/platform` — shared ingestion contract / folder upload)
@@ -39,7 +39,7 @@ The kernel is reusable as-is; do not build a one-off crawler app.
 | `Field` vocabulary already covers files | `core/.../field/Field.java` | `SOURCE_URI`, `SOURCE_ID`, `MIME_TYPE`, `CONTENT_BYTES`, `CONTENT_SIZE`, `MODIFY_DATETIME`, `TITLE`, `FILE_EXTENSION`, `IS_FOLDER`, `FOLDER_PATH`, `PATHS` |
 | Cursor is one JSON file per plugin name (`FileJsonPersistence`) | `plugin-api/.../FileJsonPersistence.java` | A multi-thousand-file fingerprint map in the cursor is rewritten on every `save()` — decide sharding before load |
 | Sink posts multipart `POST /v1/ingestion-runs` (slice 4); legacy pair removed | `plugins/synanton-target-plugin/.../SynantonClient.java` | Frozen `/v1` source + run + operation contract |
-| Sink **drops** `DELETE` | `plugins/synanton-target-plugin/.../SynantonSinkPlugin.java` | `DELETE` emission is #16's "conservative deletion" — must be handled or recorded |
+| Sink routes `DELETE` to the per-resource tombstone endpoint | `plugins/synanton-target-plugin/.../SynantonSinkPlugin.java`; `SynantonClient.delete` | Deletion is wired; a missing resource (`404`) is treated as already absent |
 
 ### The two checks, answered
 
@@ -79,12 +79,15 @@ given — record the decision in the PR.
    `/v1/sources` + `/v1/ingestion-runs` + `/v1/operations` contract (multipart).
    The legacy `/content/{tenant}` + `/ingest` pair remains for other callers until
    `synanton/platform` #329 removes it.
-4. **DELETE — wire it (decided).** The sink drops `DELETE` today (logs and
-   skips). Filesystem deletion is exactly #16's deletion semantics: the
-   connector emits `DELETE` only after a complete scan, and the migrated sink
-   calls the per-resource tombstone path
-   (`DELETE /v1/sources/{id}/resources?resource_id=...`). Until that lands, a
-   `DELETE` is conservatively *not* emitted rather than dropped silently.
+4. **DELETE — implemented.** The connector emits `DELETE` only after a
+   complete scan, and the sink calls
+   `DELETE /v1/sources/{id}/resources?resource_id=...`. An incomplete scan
+   (unreadable directory/file, or an unclassifiable entry) sets a sticky
+   `scanFailed` flag and skips reconciliation, so a partial scan can never
+   tombstone previously ingested documents. The fingerprint is removed only
+   when the `DELETE` is emitted into a page, and the runner pushes that page
+   before `source.save()`, so a sink failure re-emits rather than losing the
+   deletion.
 
 ## Design decisions
 
@@ -125,12 +128,28 @@ given — record the decision in the PR.
 
 ## Sliced implementation
 
-| Slice | Deliverable | Acceptance |
+| Slice | Deliverable | Status |
 |---|---|---|
-| 1 | `filesystem-source-plugin` + config + cursor: walk root, emit `REPLACE` per PDF/EPUB, identity fields set | A 10-book tree is searchable; a duplicate scan emits nothing |
-| 2 | Fingerprint cursor (path → size, mtime, hash); changed file → new `REPLACE` | Changed file produces a new version; unchanged file produces no change |
-| 3 | Complete-scan reconciliation: `DELETE` only for previously-known, now-absent files, and only after a complete scan | Partial scan leaves prior knowledge searchable; full scan after deletion tombstones correctly |
-| 4 | Sink alignment: migrate `SynantonClient` to `/v1/...`; tenant from verified identity (no `X-Tenant` assertion); wire `DELETE` to the per-resource tombstone path | Crawler and #328 upload converge on one ingestion contract; legacy route dropped after migration |
+| 1 | `filesystem-source-plugin` + config + cursor: walk root, emit `REPLACE` per PDF/EPUB, identity fields set | Implemented (PR #18) |
+| 2 | Fingerprint cursor (path → size, mtime, hash); changed file → new `REPLACE` | Implemented (PR #18) |
+| 3 | Complete-scan reconciliation: `DELETE` only for previously-known, now-absent files, and only after a complete scan | Implemented; tests cover complete-scan delete, incomplete-scan suppression, and recovery after permissions return |
+| 4 | Sink alignment: migrate `SynantonClient` to `/v1/...`; tenant from verified identity (no `X-Tenant` assertion); wire `DELETE` to the per-resource tombstone path | Implemented (PR #21); DELETE wiring added with `SynantonClient.delete` |
+
+## Deletion behavior
+
+- A path is a deletion candidate only when it is present in the persisted
+  fingerprint state and absent from a scan that completed without a listing,
+  traversal, or file-read failure.
+- `scanFailed` is sticky for the scan. A failed directory listing, unreadable
+  file, or unclassifiable filesystem entry suppresses all deletion
+  reconciliation for that pass and leaves the fingerprints intact.
+- Deletion candidates are removed from the fingerprint state only as they are
+  emitted into a `ChangePage`; `IngestRunner` calls `target.push(page)` before
+  `source.save()`, so a sink failure causes the deletion to be re-emitted on the
+  next pass rather than silently lost.
+- A `404` from the platform's resource-delete endpoint is treated as already
+  absent. A successful delete returns the platform `run_id`/`operation_id` and
+  is logged by the sink.
 
 Slices 1–3 are pure Lucentrix work. Slice 4 decides whether "two ingestion
 modes, one contract" is true, and is a prerequisite for calling #16 done

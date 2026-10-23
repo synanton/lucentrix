@@ -86,7 +86,7 @@ java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no
 |---|---|
 | `dummy-source-plugin` | Synthetic insurance documents |
 | `web-source-plugin` | BFS HTML crawler |
-| `filesystem-source-plugin` | Incremental PDF/EPUB library crawler (SHA-256 fingerprints, resumable scan state) |
+| `filesystem-source-plugin` | Incremental PDF/EPUB library crawler (SHA-256 fingerprints, resumable scan state, complete-scan deletion reconciliation) |
 | `synanton-target-plugin` | Push each file as multipart `POST /v1/ingestion-runs` (upload source; tenant from the bearer token) |
 | `null-target-plugin` | No-op sink for local throughput tests |
 

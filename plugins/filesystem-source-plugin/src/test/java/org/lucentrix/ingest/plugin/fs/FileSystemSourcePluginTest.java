@@ -3,6 +3,7 @@ package org.lucentrix.ingest.plugin.fs;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.lucentrix.ingest.ChangeOp;
 import org.lucentrix.ingest.ChangePage;
 import org.lucentrix.ingest.ContentChange;
 import org.lucentrix.ingest.SourceDocument;
@@ -17,9 +18,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -180,6 +185,56 @@ public class FileSystemSourcePluginTest {
 
         assertEquals(1, events.size());
         assertEquals("a", events.get(0).getDocument().getTitle());
+    }
+
+    @Test
+    public void completeScanEmitsDeleteForMissingFileAndClearsItsFingerprint() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("a.pdf"), "content-a");
+        write(root.resolve("nested/b.epub"), "content-b");
+
+        assertEquals(2, drain(newPlugin(root, 1000, List.of("**/*.pdf", "**/*.epub"))).size());
+
+        Files.delete(root.resolve("nested/b.epub"));
+        List<ContentChange> changes = drain(newPlugin(root, 1000, List.of("**/*.pdf", "**/*.epub")));
+
+        assertEquals(1, changes.size());
+        assertEquals(ChangeOp.DELETE, changes.get(0).getAction());
+        assertEquals("lucentrix://filesystem/lib/nested/b.epub",
+                changes.get(0).getDocument().get(Field.SOURCE_URI));
+        assertEquals("lib:nested/b.epub", changes.get(0).getDocument().getVersionSeriesId());
+
+        assertTrue(drain(newPlugin(root, 1000, List.of("**/*.pdf", "**/*.epub"))).isEmpty());
+    }
+
+    @Test
+    public void incompleteScanDoesNotReconcileDeletes() throws Exception {
+        Path root = libraryRoot();
+        Path locked = root.resolve("locked");
+        write(locked.resolve("a.pdf"), "content-a");
+        write(locked.resolve("b.pdf"), "content-b");
+
+        assertEquals(2, drain(newPlugin(root, 1000, List.of("**/*.pdf"))).size());
+
+        Files.delete(locked.resolve("a.pdf"));
+        Assumptions.assumeTrue(
+                Files.getFileStore(root).supportsFileAttributeView(PosixFileAttributeView.class),
+                "POSIX permissions are required for this test");
+        Set<PosixFilePermission> original = Files.getPosixFilePermissions(locked);
+        Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("---------"));
+        Assumptions.assumeFalse(Files.isReadable(locked), "permission enforcement unavailable");
+        try {
+            assertTrue(drain(newPlugin(root, 1000, List.of("**/*.pdf"))).isEmpty(),
+                    "an incomplete scan must not emit deletions");
+        } finally {
+            Files.setPosixFilePermissions(locked, original);
+        }
+
+        List<ContentChange> recovered = drain(newPlugin(root, 1000, List.of("**/*.pdf")));
+        assertEquals(1, recovered.size());
+        assertEquals(ChangeOp.DELETE, recovered.get(0).getAction());
+        assertEquals("lucentrix://filesystem/lib/locked/a.pdf",
+                recovered.get(0).getDocument().get(Field.SOURCE_URI));
     }
 
     private Path libraryRoot() throws Exception {
