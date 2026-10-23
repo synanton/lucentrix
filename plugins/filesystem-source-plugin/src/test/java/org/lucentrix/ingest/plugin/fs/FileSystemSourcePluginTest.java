@@ -274,6 +274,32 @@ public class FileSystemSourcePluginTest {
         assertTrue(remaining.isEmpty(), "a file that reappeared must not be deleted");
     }
 
+    @Test
+    public void interruptedAfterDeleteEmissionBeforeSave_reemitsWithoutOrphanedFingerprint() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("a.pdf"), "content-a");
+        drain(newPlugin(root, 1000, List.of("**/*.pdf")));
+
+        Files.delete(root.resolve("a.pdf"));
+
+        FileSystemSourcePlugin interrupted = newPlugin(root, 1, List.of("**/*.pdf"));
+        interrupted.start();
+        ChangePage emitted = interrupted.next();
+        assertEquals(1, emitted.getItems().size());
+        assertEquals(ChangeOp.DELETE, emitted.getItems().get(0).getAction());
+        // Simulates process death after the sink push and before source.save():
+        // the emitted deletion must not be persisted as complete.
+
+        List<ContentChange> resumed = drain(newPlugin(root, 1, List.of("**/*.pdf")));
+
+        assertEquals(1, resumed.size());
+        assertEquals(ChangeOp.DELETE, resumed.get(0).getAction());
+        FileScanState state = new FileJsonPersistence(tempDir.resolve("storage"))
+                .load("fs-test-fs-state", FileScanState.class);
+        assertTrue(state.fingerprintsOrEmpty().isEmpty(), "recovery must not leave orphaned fingerprints");
+        assertTrue(drain(newPlugin(root, 1, List.of("**/*.pdf"))).isEmpty());
+    }
+
     private Path libraryRoot() throws Exception {
         Path root = tempDir.resolve("library");
         Files.createDirectories(root);

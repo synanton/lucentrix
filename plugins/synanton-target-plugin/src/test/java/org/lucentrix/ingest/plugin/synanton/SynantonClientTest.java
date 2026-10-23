@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SynantonClientTest {
@@ -40,6 +41,55 @@ class SynantonClientTest {
             assertEquals("run-1", result.runId());
             assertEquals("op-1", result.operationId());
             assertEquals("SCHEDULED", result.status());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void deleteHttp500PropagatesAsAFailure() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/sources", exchange -> {
+            exchange.sendResponseHeaders(201, -1);
+            exchange.close();
+        });
+        server.createContext("/v1/sources/src/resources", exchange -> {
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SynantonClient client = new SynantonClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "src", "upload", "upload://src", "token");
+
+            assertThrows(RuntimeException.class, () -> client.delete("a.pdf"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void deleteHttp404IsIdempotentAlreadyAbsent() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/sources", exchange -> {
+            exchange.sendResponseHeaders(201, -1);
+            exchange.close();
+        });
+        server.createContext("/v1/sources/src/resources", exchange -> {
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SynantonClient client = new SynantonClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "src", "upload", "upload://src", "token");
+
+            SynantonClient.UploadResult result = client.delete("a.pdf");
+
+            assertEquals("NOT_FOUND", result.status());
+            assertTrue(result.runId().isEmpty());
         } finally {
             server.stop(0);
         }
