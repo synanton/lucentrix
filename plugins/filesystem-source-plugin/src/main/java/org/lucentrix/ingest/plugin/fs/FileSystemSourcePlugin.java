@@ -181,6 +181,9 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
                     done = true;
                     break;
                 }
+                if (!deletionStillAbsent(deletedPath)) {
+                    continue;
+                }
                 state.fingerprintsOrEmpty().remove(deletedPath);
                 dirtyFingerprints++;
                 events.add(toDeletion(deletedPath));
@@ -271,6 +274,15 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
         if (!pendingDeletions.isEmpty()) {
             logger.info("Reconciled {} deleted files after a complete scan", pendingDeletions.size());
         }
+    }
+
+    private boolean deletionStillAbsent(String relativePath) {
+        Path path = root.resolve(relativePath);
+        if (!Files.notExists(path)) {
+            logger.info("Deletion cancelled; path exists or is inaccessible: {}", path);
+            return false;
+        }
+        return true;
     }
 
     private ContentChange toDeletion(String relativePath) {

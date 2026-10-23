@@ -150,6 +150,20 @@ given — record the decision in the PR.
 - A `404` from the platform's resource-delete endpoint is treated as already
   absent. A successful delete returns the platform `run_id`/`operation_id` and
   is logged by the sink.
+- At emission time the connector re-checks `Files.notExists(path)`. If the path
+  exists or its state is inaccessible, the deletion is cancelled and the
+  fingerprint is retained; the next complete scan decides again. This closes
+  the scan-to-emission TOCTOU window. A last-moment reappearance between the
+  HTTP request and the platform tombstone remains a bounded race; deletion is
+  idempotent, and a file that reappears is re-ingested by the next scan.
+- `FileJsonPersistence.save` writes to a temporary file in the same directory
+  and atomically moves it over the state file (falling back to a replace move
+  where atomic moves are unavailable), so a crash cannot leave a partially
+  written fingerprint cursor.
+- Whole-scan suppression is deliberate: one unreadable directory/file, or any
+  unclassifiable entry, suppresses deletion reconciliation for the entire pass.
+  The test suite pins this, including a deletion candidate outside the locked
+  directory.
 
 Slices 1–3 are pure Lucentrix work. Slice 4 decides whether "two ingestion
 modes, one contract" is true, and is a prerequisite for calling #16 done

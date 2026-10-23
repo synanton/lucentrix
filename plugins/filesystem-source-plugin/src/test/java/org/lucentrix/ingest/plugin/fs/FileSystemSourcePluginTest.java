@@ -213,10 +213,12 @@ public class FileSystemSourcePluginTest {
         Path locked = root.resolve("locked");
         write(locked.resolve("a.pdf"), "content-a");
         write(locked.resolve("b.pdf"), "content-b");
+        write(root.resolve("outside.pdf"), "content-outside");
 
-        assertEquals(2, drain(newPlugin(root, 1000, List.of("**/*.pdf"))).size());
+        assertEquals(3, drain(newPlugin(root, 1000, List.of("**/*.pdf"))).size());
 
         Files.delete(locked.resolve("a.pdf"));
+        Files.delete(root.resolve("outside.pdf"));
         Assumptions.assumeTrue(
                 Files.getFileStore(root).supportsFileAttributeView(PosixFileAttributeView.class),
                 "POSIX permissions are required for this test");
@@ -231,10 +233,45 @@ public class FileSystemSourcePluginTest {
         }
 
         List<ContentChange> recovered = drain(newPlugin(root, 1000, List.of("**/*.pdf")));
-        assertEquals(1, recovered.size());
-        assertEquals(ChangeOp.DELETE, recovered.get(0).getAction());
-        assertEquals("lucentrix://filesystem/lib/locked/a.pdf",
-                recovered.get(0).getDocument().get(Field.SOURCE_URI));
+        assertEquals(2, recovered.size());
+        assertEquals(Set.of(
+                        "lucentrix://filesystem/lib/locked/a.pdf",
+                        "lucentrix://filesystem/lib/outside.pdf"),
+                recovered.stream()
+                        .map(change -> change.getDocument().get(Field.SOURCE_URI))
+                        .collect(Collectors.toSet()));
+        assertTrue(recovered.stream().allMatch(change -> change.getAction() == ChangeOp.DELETE));
+    }
+
+    @Test
+    public void reappearedFileIsNotDeletedWhenEmissionResumes() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("a.pdf"), "content-a");
+        write(root.resolve("b.pdf"), "content-b");
+        drain(newPlugin(root, 1000, List.of("**/*.pdf")));
+
+        Files.delete(root.resolve("a.pdf"));
+        Files.delete(root.resolve("b.pdf"));
+
+        FileSystemSourcePlugin plugin = newPlugin(root, 1, List.of("**/*.pdf"));
+        plugin.start();
+        ChangePage firstPage = plugin.next();
+        plugin.save();
+        assertEquals(1, firstPage.getItems().size());
+        assertEquals(ChangeOp.DELETE, firstPage.getItems().get(0).getAction());
+
+        String emitted = firstPage.getItems().get(0).getDocument().get(Field.SOURCE_URI);
+        String pending = emitted.endsWith("/a.pdf") ? "b.pdf" : "a.pdf";
+        write(root.resolve(pending), "content-" + pending.charAt(0));
+
+        List<ContentChange> remaining = new ArrayList<>();
+        while (plugin.hasNext()) {
+            ChangePage page = plugin.next();
+            remaining.addAll(page.getItems());
+            plugin.save();
+        }
+
+        assertTrue(remaining.isEmpty(), "a file that reappeared must not be deleted");
     }
 
     private Path libraryRoot() throws Exception {
