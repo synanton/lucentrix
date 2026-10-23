@@ -17,6 +17,12 @@ files need the asynchronous extraction path/configuration.
 A re-crawl treats `409` from `/v1/sources` as "source already exists" and
 continues with the upload.
 
+## Pull request convention
+
+For a PR that completes only one slice of a larger issue, reference it as
+`Refs #N`; do not use `Closes #N` / `Fixes #N`. Close the issue only when its
+acceptance evidence is merged.
+
 ## Requirements
 
 - Java 21
