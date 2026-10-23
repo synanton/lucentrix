@@ -71,6 +71,7 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
     private static final String DEFAULT_MIME_TYPE = "application/octet-stream";
 
     private final Deque<Path> directories = new ArrayDeque<>();
+    private final Deque<String> pendingDeletions = new ArrayDeque<>();
     private final Set<String> seenThisScan = new HashSet<>();
     private final Set<Path> visitedRealDirectories = new HashSet<>();
     private final List<PathMatcher> includeMatchers = new ArrayList<>();
@@ -82,6 +83,8 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
     private String rootId;
     private Iterator<Path> fileIterator;
     private boolean walkComplete;
+    private boolean deletionsReconciled;
+    private boolean scanFailed;
     private boolean done;
     private boolean computeSha256;
     private int checkpointBatchSize;
@@ -137,12 +140,15 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
         this.state = loadState(name);
 
         this.walkComplete = false;
+        this.deletionsReconciled = false;
+        this.scanFailed = false;
         this.done = false;
         this.fileIterator = null;
         this.dirtyFingerprints = 0;
         this.persistedFingerprints = 0;
         this.directories.clear();
         this.directories.add(root);
+        this.pendingDeletions.clear();
         this.seenThisScan.clear();
 
         logger.info("Filesystem source started: root={}, rootId={}, include={}",
@@ -166,8 +172,22 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
         while (events.size() < pageSize) {
             Path file = nextFile();
             if (file == null) {
-                walkComplete = true;
-                break;
+                if (!walkComplete) {
+                    walkComplete = true;
+                    reconcileDeletions();
+                }
+                String deletedPath = pendingDeletions.poll();
+                if (deletedPath == null) {
+                    done = true;
+                    break;
+                }
+                if (!deletionStillAbsent(deletedPath)) {
+                    continue;
+                }
+                state.fingerprintsOrEmpty().remove(deletedPath);
+                dirtyFingerprints++;
+                events.add(toDeletion(deletedPath));
+                continue;
             }
 
             String relativePath = relativePath(file);
@@ -181,16 +201,9 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
                     events.add(change);
                 }
             } catch (IOException | SecurityException e) {
+                scanFailed = true;
                 logger.warn("Skipping unreadable file {}: {}", file, e.getMessage());
             }
-        }
-
-        if (walkComplete) {
-            // Slice 3 will reconcile deletions here: every state key not in
-            // seenThisScan is a deletion candidate, emitted only after a
-            // complete walk. Deliberately not emitted yet.
-            done = true;
-            state.setLastScanCompletedMillis(System.currentTimeMillis());
         }
 
         return ChangePage.builder().items(events).cursor(cursor).hasNext(!done).build();
@@ -243,6 +256,57 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
         dirtyFingerprints++;
     }
 
+    private void reconcileDeletions() {
+        if (deletionsReconciled) {
+            return;
+        }
+        deletionsReconciled = true;
+        if (scanFailed) {
+            logger.warn("Filesystem scan incomplete; deletion reconciliation skipped");
+            return;
+        }
+        for (String relativePath : new ArrayList<>(state.fingerprintsOrEmpty().keySet())) {
+            if (!seenThisScan.contains(relativePath)) {
+                pendingDeletions.add(relativePath);
+            }
+        }
+        state.setLastScanCompletedMillis(System.currentTimeMillis());
+        if (!pendingDeletions.isEmpty()) {
+            logger.info("Reconciled {} deleted files after a complete scan", pendingDeletions.size());
+        }
+    }
+
+    private boolean deletionStillAbsent(String relativePath) {
+        Path path = root.resolve(relativePath);
+        if (!Files.notExists(path)) {
+            logger.info("Deletion cancelled; path exists or is inaccessible: {}", path);
+            return false;
+        }
+        return true;
+    }
+
+    private ContentChange toDeletion(String relativePath) {
+        int slash = relativePath.lastIndexOf('/');
+        String fileName = slash >= 0 ? relativePath.substring(slash + 1) : relativePath;
+        String extension = extension(fileName);
+
+        SourceDocument document = SourceDocument.builder()
+                .id(stableId(relativePath))
+                .field(Field.SOURCE_ID, rootId)
+                .field(Field.SOURCE_URI, sourceUri(relativePath))
+                .field(Field.MIME_TYPE, mimeType(extension))
+                .field(Field.FILE_EXTENSION, extension)
+                .field(Field.TITLE, title(fileName))
+                .vsId(rootId + ":" + relativePath)
+                .field(Field.IS_CURRENT_VERSION, false)
+                .build();
+
+        return ContentChange.builder()
+                .action(ChangeOp.DELETE)
+                .document(document)
+                .build();
+    }
+
     private ContentChange toChange(Path file, String relativePath, byte[] bytes, long size, long modifiedMillis) {
         String fileName = file.getFileName().toString();
         String extension = extension(fileName);
@@ -288,6 +352,11 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
 
     private List<Path> listFiles(Path directory) {
         List<Path> files = new ArrayList<>();
+        if (!Files.isReadable(directory)) {
+            scanFailed = true;
+            logger.warn("Cannot list directory {}: not readable", directory);
+            return files;
+        }
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory)) {
             List<Path> entries = new ArrayList<>();
             stream.forEach(entries::add);
@@ -298,14 +367,24 @@ public class FileSystemSourcePlugin extends AbstractPlugin<FileSystemSourceConfi
                     continue;
                 }
                 if (Files.isDirectory(entry)) {
+                    if (!Files.isReadable(entry)) {
+                        scanFailed = true;
+                        logger.warn("Cannot list directory {}: not readable", entry);
+                    }
                     if (shouldDescend(entry)) {
                         directories.add(entry);
                     }
-                } else if (Files.isRegularFile(entry) && isIncluded(entry)) {
-                    files.add(entry);
+                } else if (Files.isRegularFile(entry)) {
+                    if (isIncluded(entry)) {
+                        files.add(entry);
+                    }
+                } else {
+                    scanFailed = true;
+                    logger.warn("Cannot classify filesystem entry {}; scan is incomplete", entry);
                 }
             }
         } catch (IOException | SecurityException e) {
+            scanFailed = true;
             logger.warn("Cannot list directory {}: {}", directory, e.getMessage());
         }
         return files;

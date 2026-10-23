@@ -11,10 +11,12 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -74,8 +76,19 @@ public class FileJsonPersistence implements ItemPersistence, ExtensionPoint {
         lock.lock();
         try {
             Path path = filePathForId(id);
-            try (OutputStream os = Files.newOutputStream(path)) {
-                mapper.writeValue(os, obj);
+            Path temp = Files.createTempFile(storageDir, "tmp-" + id + "-", ".tmp");
+            try {
+                try (OutputStream os = Files.newOutputStream(temp)) {
+                    mapper.writeValue(os, obj);
+                }
+                try {
+                    Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(temp);
             }
         } catch (IOException ex) {
             throw new RuntimeException("Error saving object " + obj + " as json file", ex);

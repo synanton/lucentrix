@@ -3,6 +3,7 @@ package org.lucentrix.ingest.plugin.fs;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.lucentrix.ingest.ChangeOp;
 import org.lucentrix.ingest.ChangePage;
 import org.lucentrix.ingest.ContentChange;
 import org.lucentrix.ingest.SourceDocument;
@@ -17,9 +18,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -180,6 +185,93 @@ public class FileSystemSourcePluginTest {
 
         assertEquals(1, events.size());
         assertEquals("a", events.get(0).getDocument().getTitle());
+    }
+
+    @Test
+    public void completeScanEmitsDeleteForMissingFileAndClearsItsFingerprint() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("a.pdf"), "content-a");
+        write(root.resolve("nested/b.epub"), "content-b");
+
+        assertEquals(2, drain(newPlugin(root, 1000, List.of("**/*.pdf", "**/*.epub"))).size());
+
+        Files.delete(root.resolve("nested/b.epub"));
+        List<ContentChange> changes = drain(newPlugin(root, 1000, List.of("**/*.pdf", "**/*.epub")));
+
+        assertEquals(1, changes.size());
+        assertEquals(ChangeOp.DELETE, changes.get(0).getAction());
+        assertEquals("lucentrix://filesystem/lib/nested/b.epub",
+                changes.get(0).getDocument().get(Field.SOURCE_URI));
+        assertEquals("lib:nested/b.epub", changes.get(0).getDocument().getVersionSeriesId());
+
+        assertTrue(drain(newPlugin(root, 1000, List.of("**/*.pdf", "**/*.epub"))).isEmpty());
+    }
+
+    @Test
+    public void incompleteScanDoesNotReconcileDeletes() throws Exception {
+        Path root = libraryRoot();
+        Path locked = root.resolve("locked");
+        write(locked.resolve("a.pdf"), "content-a");
+        write(locked.resolve("b.pdf"), "content-b");
+        write(root.resolve("outside.pdf"), "content-outside");
+
+        assertEquals(3, drain(newPlugin(root, 1000, List.of("**/*.pdf"))).size());
+
+        Files.delete(locked.resolve("a.pdf"));
+        Files.delete(root.resolve("outside.pdf"));
+        Assumptions.assumeTrue(
+                Files.getFileStore(root).supportsFileAttributeView(PosixFileAttributeView.class),
+                "POSIX permissions are required for this test");
+        Set<PosixFilePermission> original = Files.getPosixFilePermissions(locked);
+        Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("---------"));
+        Assumptions.assumeFalse(Files.isReadable(locked), "permission enforcement unavailable");
+        try {
+            assertTrue(drain(newPlugin(root, 1000, List.of("**/*.pdf"))).isEmpty(),
+                    "an incomplete scan must not emit deletions");
+        } finally {
+            Files.setPosixFilePermissions(locked, original);
+        }
+
+        List<ContentChange> recovered = drain(newPlugin(root, 1000, List.of("**/*.pdf")));
+        assertEquals(2, recovered.size());
+        assertEquals(Set.of(
+                        "lucentrix://filesystem/lib/locked/a.pdf",
+                        "lucentrix://filesystem/lib/outside.pdf"),
+                recovered.stream()
+                        .map(change -> change.getDocument().get(Field.SOURCE_URI))
+                        .collect(Collectors.toSet()));
+        assertTrue(recovered.stream().allMatch(change -> change.getAction() == ChangeOp.DELETE));
+    }
+
+    @Test
+    public void reappearedFileIsNotDeletedWhenEmissionResumes() throws Exception {
+        Path root = libraryRoot();
+        write(root.resolve("a.pdf"), "content-a");
+        write(root.resolve("b.pdf"), "content-b");
+        drain(newPlugin(root, 1000, List.of("**/*.pdf")));
+
+        Files.delete(root.resolve("a.pdf"));
+        Files.delete(root.resolve("b.pdf"));
+
+        FileSystemSourcePlugin plugin = newPlugin(root, 1, List.of("**/*.pdf"));
+        plugin.start();
+        ChangePage firstPage = plugin.next();
+        plugin.save();
+        assertEquals(1, firstPage.getItems().size());
+        assertEquals(ChangeOp.DELETE, firstPage.getItems().get(0).getAction());
+
+        String emitted = firstPage.getItems().get(0).getDocument().get(Field.SOURCE_URI);
+        String pending = emitted.endsWith("/a.pdf") ? "b.pdf" : "a.pdf";
+        write(root.resolve(pending), "content-" + pending.charAt(0));
+
+        List<ContentChange> remaining = new ArrayList<>();
+        while (plugin.hasNext()) {
+            ChangePage page = plugin.next();
+            remaining.addAll(page.getItems());
+            plugin.save();
+        }
+
+        assertTrue(remaining.isEmpty(), "a file that reappeared must not be deleted");
     }
 
     private Path libraryRoot() throws Exception {

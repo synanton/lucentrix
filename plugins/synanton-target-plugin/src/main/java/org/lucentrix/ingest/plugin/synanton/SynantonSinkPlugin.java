@@ -40,12 +40,14 @@ public class SynantonSinkPlugin extends AbstractPlugin<SynantonSinkConfig, SinkC
             if (change == null || change.getDocument() == null) {
                 continue;
             }
-            if (SynantonPayload.isDelete(change)) {
-                log.warn("DELETE not implemented for Synanton v1; skipping id={}", change.getId());
-                continue;
-            }
             SourceDocument document = change.getDocument();
             String resourceId = SynantonPayload.resourceId(document);
+            if (SynantonPayload.isDelete(change)) {
+                SynantonClient.UploadResult result = client.delete(resourceId);
+                log.info("Deleted {} as run {} (operation {}, status {})",
+                        resourceId, result.runId(), result.operationId(), result.status());
+                continue;
+            }
             SynantonClient.UploadResult result = client.upload(
                     SynantonPayload.bytes(document),
                     resourceId,
