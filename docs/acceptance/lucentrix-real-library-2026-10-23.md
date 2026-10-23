@@ -83,6 +83,10 @@ Local run artifacts (logs and JSON responses) were kept outside the repository u
   The failure record above remains historical: this run did not exercise the
   fix. Criteria 5a, 5b, 6, 7, and 11 still require a clean rerun with the
   interruption/failure-injection harness before #16 can close.
+- **Artifact retention is intentional.** There is no reference counting. Reclaiming
+  shared artifacts requires either reference counting or mark-and-sweep over live
+  identities; neither is in scope. Disk growth from deleted duplicates is
+  intentional retention, not a leak.
 - **Permanent failures currently re-emit indefinitely.** Preserving the
   fingerprint on the 400 was the correct safety behavior, but a permanent
   contract failure should not look identical to a transient one. The
