@@ -2,27 +2,6 @@
 
 Lucentrix is a **pluggable ingestion CLI** for [Synanton](https://github.com/andreminin/synanton). It crawls source systems (dummy data, web, and future connectors), then **pushes raw documents** into Synanton through the platform `/v1` ingestion API. It does not parse, chunk, enrich, or index - those stages stay in Synanton.
 
-## Status (Phase 1, 2026-10-21)
-
-The filesystem source and `synanton-target-plugin` use the current
-`POST /v1/sources` + multipart `POST /v1/ingestion-runs` contract. The legacy
-`/content/{tenant}` and `/ingest` paths are removed and are not supported by
-the sink.
-
-Uploads can be large (the platform accepts multipart files up to its 100 MB
-limit), but the platform's sync extraction ceiling
-(`EXTRACTION_MAX_SYNC_OBJECT_BYTES`, default 10 MiB) still applies. Larger
-files need the asynchronous extraction path/configuration.
-
-A re-crawl treats `409` from `/v1/sources` as "source already exists" and
-continues with the upload.
-
-## Pull request convention
-
-For a PR that completes only one slice of a larger issue, reference it as
-`Refs #N`; do not use `Closes #N` / `Fixes #N`. Close the issue only when its
-acceptance evidence is merged.
-
 ## Requirements
 
 - Java 21
@@ -97,6 +76,29 @@ java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no
 | `null-target-plugin` | No-op sink for local throughput tests |
 
 Source plugins implement `SourcePlugin`; sinks implement `SinkPlugin`. Domain types: `SourceDocument`, `ContentChange`, `ChangeOp`, `ChangePage`.
+
+## Current implementation status
+
+*Phase 1 — checked 2026-10-21.*
+
+The filesystem source and `synanton-target-plugin` use the current
+`POST /v1/sources` + multipart `POST /v1/ingestion-runs` contract. The legacy
+`/content/{tenant}` and `/ingest` paths are removed and are not supported by
+the sink.
+
+Uploads can be large (the platform accepts multipart files up to its 100 MB
+limit), but the platform's synchronous extraction ceiling
+(`EXTRACTION_MAX_SYNC_OBJECT_BYTES`, default 10 MiB) still applies. Larger
+files need the asynchronous extraction path/configuration.
+
+A re-crawl treats `409` from `/v1/sources` as “source already exists” and
+continues with the upload.
+
+## Pull request convention
+
+For a PR that completes only one slice of a larger issue, reference it as
+`Refs #N`; do not use `Closes #N` / `Fixes #N`. Close the issue only when its
+acceptance evidence is merged.
 
 ## Docs
 
