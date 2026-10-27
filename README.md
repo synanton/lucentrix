@@ -1,6 +1,84 @@
 # Lucentrix
 
-Lucentrix is a **pluggable ingestion CLI** for [Synanton](https://github.com/andreminin/synanton). It crawls source systems (dummy data, web, and future connectors), then **pushes raw documents** into Synanton through the platform `/v1` ingestion API. It does not parse, chunk, enrich, or index - those stages stay in Synanton.
+Lucentrix is a **pluggable ingestion CLI** for [Synanton](https://github.com/andreminin/synanton). It moves documents between source systems and target systems through small connector plugins. Synanton remains responsible for parsing, chunking, enrichment, and indexing.
+
+## Architecture
+
+Lucentrix uses a microkernel model: the core owns orchestration and shared connector contracts; plugins own system-specific integration. Each connector plugin is isolated in its **own classloader**, so connector dependencies can differ without leaking into the core or other plugins. Plugins communicate through the stable API, not through one another's implementation classes.
+
+```mermaid
+flowchart TB
+    Sources["Source systems"]
+    subgraph Kernel["Lucentrix microkernel · CLI / scheduler / job state / checkpoints"]
+        Registry["Plugin registry & lifecycle"]
+        Contracts["Shared connector API<br/>SourcePlugin · SinkPlugin · document/change types"]
+        Orchestrator["Ingestion orchestrator<br/>poll → normalize → transfer → checkpoint"]
+        Registry --> Orchestrator
+        Orchestrator <--> Contracts
+    end
+
+    subgraph SourcePlugins["Source connector plugins · isolated classloaders"]
+        FS["Filesystem"]
+        WEB["Web crawler"]
+        DBR["Database / JDBC"]
+        CMISR["CMIS"]
+        FNR["FileNet"]
+        OTHER["Other source adapters"]
+    end
+
+    subgraph TargetPlugins["Target connector plugins · isolated classloaders"]
+        SYN["Synanton ingestion API"]
+        DBW["Database target"]
+        FSW["Filesystem / object store"]
+        CMISW["CMIS target"]
+        FNW["FileNet target"]
+        OTHERW["Other target adapters"]
+    end
+
+    Sources --> FS
+    Sources --> WEB
+    Sources --> DBR
+    Sources --> CMISR
+    Sources --> FNR
+    Sources --> OTHER
+
+    FS --> Contracts
+    WEB --> Contracts
+    DBR --> Contracts
+    CMISR --> Contracts
+    FNR --> Contracts
+    OTHER --> Contracts
+
+    Contracts --> SYN
+    Contracts --> DBW
+    Contracts --> FSW
+    Contracts --> CMISW
+    Contracts --> FNW
+    Contracts --> OTHERW
+
+    SYN --> Platform["Synanton platform"]
+```
+
+**Classloader boundary:** each plugin gets a dedicated classloader for its implementation and third-party libraries. The connector API/domain contracts are shared from the host API classloader. The kernel coordinates plugins; plugins do not load or call each other's implementation classes directly. This is the intended isolation boundary, not an operating-system security sandbox.
+
+## Connector catalog
+
+The connector API separates **sources** (read/change discovery) from **targets** (write/delivery). A connector may implement one role or both.
+
+| Connector | Role | Status |
+|---|---|---|
+| `dummy-source-plugin` | Synthetic insurance documents | Implemented |
+| `web-source-plugin` | BFS HTML crawler | Implemented |
+| `filesystem-source-plugin` | Incremental PDF/EPUB crawler, SHA-256 fingerprints, resumable scan state and complete-scan deletion reconciliation | Implemented |
+| `synanton-target-plugin` | Upload documents to Synanton's ingestion API | Implemented |
+| `null-target-plugin` | No-op sink for local throughput tests | Implemented |
+| FileNet | Source and/or target adapter | Planned |
+| CMIS repositories | Source and/or target adapter | Planned |
+| JDBC databases | Source and/or target adapter | Planned |
+| Filesystem / object storage target | Target adapter | Planned |
+| Additional enterprise content repositories and APIs | Source and/or target adapters | Extension points |
+
+Planned entries describe the connector architecture and are **not shipped implementations**. Connector availability should be updated here as each plugin is delivered.
 
 ## Requirements
 
@@ -13,13 +91,13 @@ Lucentrix is a **pluggable ingestion CLI** for [Synanton](https://github.com/and
 mvn -DskipTests package
 ```
 
-The Spring Boot CLI is `ingestion/crawler`. Plugins zip under `plugins/*/target`.
+The Spring Boot CLI is `ingestion/crawler`. Plugin ZIPs are produced under `plugins/*/target`.
 
 ## Run
 
 1. Start the Synanton platform (Cassandra, MinIO, synvault, synflux, synquest). See the Synanton README ingestion demo.
 2. Copy `application.properties` next to the CLI (or use the packaged `config/`).
-3. Point the sink at Synanton:
+3. Point the source and target plugins at their configuration:
 
 ```properties
 source.plugin.id=dummy-source-plugin
@@ -54,7 +132,7 @@ file as `multipart/form-data` to `POST /v1/ingestion-runs` with
 java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar
 ```
 
-Open http://localhost:8095 and click **Start**, or:
+Open http://localhost:8095 and click **Start**, or run once without the UI:
 
 ```bash
 java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no-ui
@@ -65,17 +143,9 @@ java -jar ingestion/crawler/target/crawler-0.1.0-SNAPSHOT.jar ingest --once --no
 - `GET /api/ingest/status` and `GET /api/ingest/events` (SSE) expose progress
 - `POST /api/ingest/start` and `POST /api/ingest/stop` control the job from the UI
 
-## Plugins
+## Connector contract
 
-| Plugin id | Role |
-|---|---|
-| `dummy-source-plugin` | Synthetic insurance documents |
-| `web-source-plugin` | BFS HTML crawler |
-| `filesystem-source-plugin` | Incremental PDF/EPUB library crawler (SHA-256 fingerprints, resumable scan state, complete-scan deletion reconciliation) |
-| `synanton-target-plugin` | Push each file as multipart `POST /v1/ingestion-runs` (upload source; tenant from the bearer token) |
-| `null-target-plugin` | No-op sink for local throughput tests |
-
-Source plugins implement `SourcePlugin`; sinks implement `SinkPlugin`. Domain types: `SourceDocument`, `ContentChange`, `ChangeOp`, `ChangePage`.
+Source plugins implement `SourcePlugin`; target plugins implement `SinkPlugin`. Shared domain types include `SourceDocument`, `ContentChange`, `ChangeOp`, and `ChangePage`. Keep connector-specific libraries and models inside the plugin boundary; exchange only API contract types with the kernel.
 
 ## Current implementation status
 
@@ -107,4 +177,4 @@ acceptance evidence is merged.
 
 ## License
 
-Apache 2.0 - see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
